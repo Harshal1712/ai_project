@@ -1,0 +1,127 @@
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id        String    @id @default(uuid())
+  email     String    @unique
+  name      String
+  password  String
+  role      String    @default("ANALYST") // ADMIN, ARCHITECT, ANALYST
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  projects  Project[]
+}
+
+model Project {
+  id                  String               @id @default(uuid())
+  name                String
+  userId              String?
+  user                User?                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sourceType          String               // pdf, docx, youtube, video, audio, text, image
+  sourceName          String
+  sourceUrl           String?
+  sourceSize          String?
+  sourceDuration      String?
+  sourceLanguage      String               @default("English")
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  status              String               @default("Completed")
+  version             String               @default("v1.0")
+
+  config              TransformationConfig?
+  outputs             GeneratedOutput[]
+  verificationReport  VerificationReport?
+  videoData           VideoData?
+  documentData        DocumentData?
+}
+
+model TransformationConfig {
+  id             String   @id @default(uuid())
+  projectId      String   @unique
+  project        Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  targetAudience String
+  outputLanguage String
+  tone           String
+  detailLevel    String
+  objective      String
+}
+
+model GeneratedOutput {
+  id        String   @id @default(uuid())
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  type      String   // Executive Summary, Key Points, etc.
+  title     String
+  content   String
+  slides    String?  // JSON encoded slides
+  quiz      String?  // JSON encoded quiz
+  createdAt DateTime @default(now())
+}
+
+model VerificationReport {
+  id            String                  @id @default(uuid())
+  projectId     String                  @unique
+  project       Project                 @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  fidelityScore Int                     @default(96)
+  totalChecks   Int                     @default(18)
+  passedChecks  Int                     @default(16)
+  warnings      Int                     @default(2)
+  checks        VerificationCheckItem[]
+}
+
+model VerificationCheckItem {
+  id                 String             @id @default(uuid())
+  reportId           String
+  report             VerificationReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  sourceStatement    String
+  generatedStatement String
+  status             String             // verified, meaning_changed, nuance_shift
+  category           String             // Numbers, Metrics, Dates, Names, Technical terms, Conditions
+  note               String
+}
+
+model VideoData {
+  id              String   @id @default(uuid())
+  projectId       String   @unique
+  project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  videoTitle      String
+  videoUrl        String
+  duration        String
+  chapters        String   // JSON array of VideoChapter
+  shortSummary    String
+  detailedSummary String
+  keyTakeaways    String   // JSON array
+  importantQuotes String   // JSON array
+  topicsDiscussed String   // JSON array
+  faq             String   // JSON array
+  quiz            String   // JSON array
+}
+
+model DocumentData {
+  id             String   @id @default(uuid())
+  projectId      String   @unique
+  project        Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  documentName   String
+  wordCount      Int
+  readingTime    String
+  keyTopics      String   // JSON array
+  keyMetrics     String   // JSON array
+  entities       String   // JSON array
+  references     String   // JSON array
+}
+
+model AnalyticsLog {
+  id            String   @id @default(uuid())
+  action        String
+  sourceType    String
+  outputsCount  Int
+  latencyMs     Int
+  fidelityScore Int
+  timestamp     DateTime @default(now())
+}
