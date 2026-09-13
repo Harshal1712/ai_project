@@ -1,14 +1,55 @@
-import { Router } from 'express';
-import { YouTubeService } from '../services/youtubeService.js';
+import { Router, Response, Request } from 'express';
+import { extractYoutube } from '../services/extraction/youtubeExtractor.js';
+import { analyzeVideoIntelligence } from '../services/generation/videoIntelligenceService.js';
+import { asyncHandler, AppError } from '../middleware/errorHandler.js';
+import { aiRateLimiter } from '../middleware/rateLimiter.js';
 
 export const youtubeRouter = Router();
 
-youtubeRouter.post('/analyze', (req, res) => {
-  const { url } = req.body;
-  if (!url) {
-    return res.status(400).json({ error: 'YouTube URL is required' });
-  }
+function formatDuration(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
 
-  const payload = YouTubeService.processVideo(url);
-  return res.json({ success: true, data: payload });
-});
+// POST /api/youtube/analyze — a lightweight, unauthenticated real-time
+// preview (real transcript + real chapter/summary analysis, but not
+// persisted) used by CreateTransformation's "analyze before submitting"
+// step. Actually creating a project from a YouTube URL goes through
+// POST /api/transformations/generate, which persists chunks/embeddings.
+youtubeRouter.post(
+  '/analyze',
+  aiRateLimiter,
+  asyncHandler(async (req: Request, res: Response) => {
+    const { url } = req.body;
+    if (!url || !url.trim()) {
+      throw new AppError(400, 'YouTube URL is required');
+    }
+
+    const extraction = await extractYoutube(url).catch((err: Error) => {
+      throw new AppError(422, err.message);
+    });
+    const intelligence = await analyzeVideoIntelligence(extraction.segments, extraction.videoTitle, extraction.durationSeconds);
+
+    return res.json({
+      success: true,
+      data: {
+        videoTitle: extraction.videoTitle,
+        videoUrl: url,
+        duration: formatDuration(extraction.durationSeconds),
+        thumbnailUrl: extraction.thumbnailUrl,
+        chapters: intelligence.chapters.map((c, i) => ({
+          id: `c${i + 1}`,
+          timestamp: formatDuration(c.startTime),
+          seconds: Math.round(c.startTime),
+          title: c.title,
+          summary: c.summary,
+        })),
+        keyTakeaways: intelligence.keyTakeaways,
+        importantQuotes: intelligence.importantQuotes,
+        topicsDiscussed: intelligence.topicsDiscussed,
+        faq: intelligence.faq,
+      },
+    });
+  })
+);

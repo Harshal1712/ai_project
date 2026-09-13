@@ -1,145 +1,221 @@
 import { Router, Response } from 'express';
-import { AIService, TransformationRequest } from '../services/aiService.js';
-import { FactVerificationService } from '../services/factVerificationService.js';
-import { DocumentExtractor } from '../services/documentExtractor.js';
-import { YouTubeService } from '../services/youtubeService.js';
-import { authenticateToken, AuthenticatedRequest } from './auth.js';
+import { Types } from 'mongoose';
+import { Project } from '../models/Project.js';
+import { Source } from '../models/Source.js';
+import { ContentChunk } from '../models/ContentChunk.js';
+import { GeneratedOutput } from '../models/GeneratedOutput.js';
+import { VerificationReport } from '../models/VerificationReport.js';
+import { Conversation } from '../models/Conversation.js';
+import { authenticateToken, AuthenticatedRequest } from '../middleware/auth.js';
+import { asyncHandler, AppError } from '../middleware/errorHandler.js';
+import { aiRateLimiter } from '../middleware/rateLimiter.js';
+import { createProjectAndEnqueue } from '../services/projectCreationService.js';
 
 export const transformationsRouter = Router();
 
-// In-memory project store
-export let storedProjects: Array<{
-  id: string;
-  name: string;
-  userId: string;
-  source: any;
-  config: any;
-  selectedOutputTypes: string[];
-  outputs: any[];
-  verification: any;
-  documentData?: any;
-  videoData?: any;
-  createdAt: string;
-  status: string;
-  version: string;
-}> = [];
+const DEFAULT_CONFIG = { audience: 'Executive', language: 'English', tone: 'Professional', detailLevel: 'Medium', objective: 'Brief' };
+const DEFAULT_OUTPUTS = ['Executive Summary', 'Key Points'];
+const DOCUMENT_TYPES = ['pdf', 'docx', 'text'];
+const VIDEO_TYPES = ['video', 'audio', 'youtube'];
 
-// Helper function to sanitize uploaded file names (Path Traversal Protection)
-export function sanitizeFileName(fileName: string): string {
-  if (!fileName) return 'unnamed_document.pdf';
-  // Remove directory traversal characters like ../ or ..\
-  const cleanName = fileName.replace(/^.*[\\\/]/, '').replace(/(\.\.[\/\\])+/g, '');
-  return cleanName || 'sanitized_document.pdf';
+function formatDuration(seconds?: number): string {
+  if (!seconds) return '';
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
-// POST /api/transformations/generate (Protected)
-transformationsRouter.post('/generate', authenticateToken, (req: AuthenticatedRequest, res: Response) => {
-  const userId = req.user?.userId || 'usr-guest';
-  const { source, config, outputs } = req.body;
-
-  const rawFileName = source?.name || 'Transformer_Architecture.pdf';
-  const sanitizedName = sanitizeFileName(rawFileName);
-
-  // File Extension Security Validation
-  const allowedExtensions = ['.pdf', '.docx', '.txt', '.mp4', '.mp3', '.png', '.jpg', '.jpeg'];
-  const ext = sanitizedName.substring(sanitizedName.lastIndexOf('.')).toLowerCase();
-  
-  if (source?.type !== 'youtube' && source?.type !== 'text' && ext && !allowedExtensions.includes(ext)) {
-    return res.status(400).json({ error: `File type ${ext} is not supported. Allowed formats: PDF, DOCX, TXT, MP4, MP3, PNG, JPG` });
-  }
-
-  const requestPayload: TransformationRequest = {
-    sourceName: sanitizedName,
-    sourceType: source?.type || 'pdf',
-    audience: config?.audience || 'Executive',
-    language: config?.language || 'English',
-    tone: config?.tone || 'Professional',
-    detailLevel: config?.detailLevel || 'Medium',
-    objective: config?.objective || 'Brief',
-    outputTypes: outputs || ['Executive Summary', 'Key Points', 'Presentation / PPT']
+// Builds the lightweight SourceContent shape the frontend expects (src/types/index.ts),
+// independent of the richer Source document used for document/video intelligence.
+function toSourceContent(project: any, source?: any) {
+  return {
+    type: project.sourceType,
+    name: project.sourceName,
+    url: project.sourceUrl,
+    size: project.sourceSize,
+    duration: source ? formatDuration(source.durationSeconds) : undefined,
+    language: project.sourceLanguage,
+    uploadDate: new Date(project.createdAt).toISOString().split('T')[0],
   };
+}
 
-  // Execute Generators
-  const generatedOutputs = AIService.generateOutputs(requestPayload);
-  const verification = FactVerificationService.verifyContent(requestPayload.sourceName, generatedOutputs.length);
-  const documentData = DocumentExtractor.extractDocument(requestPayload.sourceName);
-  const videoData = requestPayload.sourceType === 'youtube' ? YouTubeService.processVideo(source?.url || '') : undefined;
-
-  const newProject = {
-    id: `proj-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-    name: requestPayload.sourceName.replace(/\.[^/.]+$/, '') + ' Transformation',
-    userId,
-    source: {
-      type: source?.type || 'pdf',
-      name: sanitizedName,
-      size: source?.size || '4.2 MB',
-      language: source?.language || 'English',
-      uploadDate: new Date().toISOString().split('T')[0]
-    },
-    config: config || { audience: 'Executive', language: 'English', tone: 'Professional', detailLevel: 'Medium', objective: 'Brief' },
-    selectedOutputTypes: requestPayload.outputTypes,
-    outputs: generatedOutputs.map((out, idx) => ({
-      id: `out-${Date.now()}-${idx}`,
-      type: out.type,
-      title: out.title,
-      content: out.content,
-      slides: out.slides,
-      quiz: out.quiz
-    })),
-    verification,
-    documentData,
-    videoData,
-    createdAt: new Date().toISOString().replace('T', ' ').substring(0, 16),
-    status: 'Completed',
-    version: 'v1.0'
+function serializeProjectSummary(project: any) {
+  return {
+    id: project._id.toString(),
+    name: project.name,
+    source: toSourceContent(project),
+    config: project.config,
+    selectedOutputTypes: project.selectedOutputTypes,
+    status: project.status,
+    version: project.version,
+    createdAt: project.createdAt,
+    outputs: [],
+    verification: null,
   };
+}
 
-  storedProjects.unshift(newProject);
+// POST /api/transformations/generate — JSON-only creation path, for source
+// types that don't require binary file bytes: 'text' (rawText) and
+// 'youtube' (url). Real file types (pdf/docx/txt/video/audio) go through
+// POST /api/sources/upload instead. Returns 202 + jobId — processing happens
+// asynchronously in the worker, never inline on this request.
+transformationsRouter.post(
+  '/generate',
+  authenticateToken,
+  aiRateLimiter,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const userId = req.user!.userId;
+    const { source, config, outputs } = req.body;
 
-  return res.status(201).json({
-    success: true,
-    project: newProject
-  });
-});
+    const sourceType = source?.type;
+    if (sourceType !== 'text' && sourceType !== 'youtube') {
+      throw new AppError(400, `Source type "${sourceType}" requires a file upload — use POST /api/sources/upload instead.`);
+    }
+    if (sourceType === 'text' && !source?.rawText?.trim()) {
+      throw new AppError(400, 'Text sources require a non-empty "rawText" field.');
+    }
+    if (sourceType === 'youtube' && !source?.url?.trim()) {
+      throw new AppError(400, 'YouTube sources require a "url" field.');
+    }
 
-// GET /api/transformations/projects (Protected — User Isolated)
-transformationsRouter.get('/projects', authenticateToken, (req: AuthenticatedRequest, res: Response) => {
-  const userId = req.user?.userId;
-  const userProjects = storedProjects.filter(p => p.userId === userId);
-  return res.json({
-    projects: userProjects
-  });
-});
+    const sourceName = source?.name || (sourceType === 'youtube' ? source.url : 'Pasted Text.txt');
 
-// GET /api/transformations/projects/:id (Protected — User Isolated Authorization Check)
-transformationsRouter.get('/projects/:id', authenticateToken, (req: AuthenticatedRequest, res: Response) => {
-  const project = storedProjects.find(p => p.id === req.params.id);
+    const { projectId, jobId } = await createProjectAndEnqueue({
+      userId,
+      sourceType,
+      sourceName,
+      sourceUrl: sourceType === 'youtube' ? source.url : undefined,
+      sourceLanguage: source?.language,
+      rawText: sourceType === 'text' ? source.rawText : undefined,
+      config: { ...DEFAULT_CONFIG, ...config },
+      outputTypes: outputs && outputs.length > 0 ? outputs : DEFAULT_OUTPUTS,
+    });
 
-  if (!project) {
-    return res.status(404).json({ error: 'Project not found' });
-  }
+    return res.status(202).json({ success: true, projectId, jobId, status: 'QUEUED' });
+  })
+);
 
-  // User Authorization Check
-  if (project.userId !== req.user?.userId) {
-    return res.status(403).json({ error: 'Access forbidden: You do not have permission to view this project' });
-  }
+transformationsRouter.get(
+  '/projects',
+  authenticateToken,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const projects = await Project.find({ userId: req.user!.userId }).sort({ createdAt: -1 }).lean();
+    return res.json({ projects: projects.map(serializeProjectSummary) });
+  })
+);
 
-  return res.json({ project });
-});
+transformationsRouter.get(
+  '/projects/:id',
+  authenticateToken,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    if (!Types.ObjectId.isValid(String(req.params.id))) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
 
-// DELETE /api/transformations/projects/:id (Protected — User Isolated Authorization Check)
-transformationsRouter.delete('/projects/:id', authenticateToken, (req: AuthenticatedRequest, res: Response) => {
-  const project = storedProjects.find(p => p.id === req.params.id);
+    const project = await Project.findById(req.params.id).lean();
+    if (!project) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+    if (project.userId.toString() !== req.user!.userId) {
+      return res.status(403).json({ error: 'Access forbidden: You do not have permission to view this project' });
+    }
 
-  if (!project) {
-    return res.status(404).json({ error: 'Project not found' });
-  }
+    const [source, outputs, verification] = await Promise.all([
+      Source.findOne({ projectId: project._id }).lean(),
+      GeneratedOutput.find({ projectId: project._id }).sort({ createdAt: 1 }).lean(),
+      VerificationReport.findOne({ projectId: project._id }).sort({ createdAt: -1 }).lean(),
+    ]);
 
-  // User Authorization Check
-  if (project.userId !== req.user?.userId) {
-    return res.status(403).json({ error: 'Access forbidden: You do not have permission to delete this project' });
-  }
+    const isDocument = DOCUMENT_TYPES.includes(project.sourceType);
+    const isVideo = VIDEO_TYPES.includes(project.sourceType);
 
-  storedProjects = storedProjects.filter(p => p.id !== req.params.id);
-  return res.json({ success: true, message: 'Project deleted successfully' });
-});
+    const documentData = source && isDocument ? {
+      documentName: source.originalName,
+      wordCount: source.wordCount || 0,
+      readingTime: source.readingTime || '',
+      keyTopics: source.keyTopics || [],
+      importantDates: source.importantDates || [],
+      keyMetrics: source.keyMetrics || [],
+      entities: source.entities || [],
+      references: source.references || [],
+    } : undefined;
+
+    const videoData = source && isVideo ? {
+      videoTitle: source.videoTitle || source.originalName,
+      videoUrl: source.sourceUrl || '',
+      duration: formatDuration(source.durationSeconds),
+      chapters: source.chapters || [],
+      shortSummary: source.shortSummary || '',
+      detailedSummary: source.detailedSummary || '',
+      keyTakeaways: source.keyTakeaways || [],
+      importantQuotes: source.importantQuotes || [],
+      topicsDiscussed: source.topicsDiscussed || [],
+      faq: source.faq || [],
+      quiz: source.quiz || [],
+    } : undefined;
+
+    return res.json({
+      project: {
+        id: project._id.toString(),
+        name: project.name,
+        source: toSourceContent(project, source),
+        config: project.config,
+        selectedOutputTypes: project.selectedOutputTypes,
+        status: project.status,
+        version: project.version,
+        createdAt: project.createdAt,
+        failureReason: project.failureReason,
+        outputs: outputs.map((o) => ({
+          id: o._id.toString(),
+          type: o.type,
+          title: o.title,
+          content: o.content,
+          slides: o.slides,
+          quiz: o.quiz,
+          items: o.items,
+        })),
+        verification: verification
+          ? {
+              fidelityScore: verification.fidelityScore,
+              totalChecks: verification.totalChecks,
+              passedChecks: verification.passedChecks,
+              warnings: verification.warnings,
+              checks: verification.checks,
+            }
+          : null,
+        documentData,
+        videoData,
+      },
+    });
+  })
+);
+
+transformationsRouter.delete(
+  '/projects/:id',
+  authenticateToken,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    if (!Types.ObjectId.isValid(String(req.params.id))) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    const project = await Project.findById(req.params.id);
+    if (!project) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+    if (project.userId.toString() !== req.user!.userId) {
+      return res.status(403).json({ error: 'Access forbidden: You do not have permission to delete this project' });
+    }
+
+    // Mongoose has no cascading deletes — clean up every dependent collection explicitly.
+    await Promise.all([
+      Source.deleteMany({ projectId: project._id }),
+      ContentChunk.deleteMany({ projectId: project._id }),
+      GeneratedOutput.deleteMany({ projectId: project._id }),
+      VerificationReport.deleteMany({ projectId: project._id }),
+      Conversation.deleteMany({ projectId: project._id }),
+    ]);
+    await project.deleteOne();
+
+    return res.json({ success: true, message: 'Project deleted successfully' });
+  })
+);

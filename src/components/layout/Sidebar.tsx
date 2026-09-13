@@ -1,15 +1,15 @@
-import React from 'react';
-import { 
-  LayoutDashboard, 
-  PlusCircle, 
-  FolderKanban, 
-  FileText, 
-  Video, 
-  ShieldCheck, 
-  LayoutTemplate, 
-  History, 
-  BarChart3, 
-  Settings, 
+import React, { useEffect, useState } from 'react';
+import {
+  LayoutDashboard,
+  PlusCircle,
+  FolderKanban,
+  FileText,
+  Video,
+  ShieldCheck,
+  LayoutTemplate,
+  History,
+  BarChart3,
+  Settings,
   Sparkles,
   ChevronLeft,
   ChevronRight,
@@ -17,6 +17,7 @@ import {
   Bot
 } from 'lucide-react';
 import { NavigationTab } from '../../types';
+import { ContentIQApiClient } from '../../services/api';
 
 interface SidebarProps {
   activeTab: NavigationTab;
@@ -33,6 +34,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
   setCollapsed,
   completedTransformationsCount
 }) => {
+  const [aiModel, setAiModel] = useState<string | null>(null);
+
+  useEffect(() => {
+    ContentIQApiClient.getHealthInfo().then((info) => {
+      if (info) setAiModel(info.aiModel);
+    });
+  }, []);
+
   const navItems = [
     { id: 'dashboard' as NavigationTab, label: 'Dashboard', icon: LayoutDashboard },
     { id: 'create' as NavigationTab, label: 'Create Transformation', icon: PlusCircle, badge: 'NEW', highlight: true },
@@ -40,7 +49,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'documents' as NavigationTab, label: 'Documents', icon: FileText },
     { id: 'video-summarizer' as NavigationTab, label: 'Video Summaries', icon: Video },
     { id: 'document-intelligence' as NavigationTab, label: 'Doc Intelligence', icon: Cpu },
-    { id: 'verification' as NavigationTab, label: 'Fact Verification', icon: ShieldCheck, badge: '96% Score' },
+    { id: 'verification' as NavigationTab, label: 'Fact Verification', icon: ShieldCheck },
     { id: 'templates' as NavigationTab, label: 'Templates', icon: LayoutTemplate },
     { id: 'history' as NavigationTab, label: 'History', icon: History },
     { id: 'analytics' as NavigationTab, label: 'Analytics', icon: BarChart3 },
@@ -141,12 +150,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-              <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">ContentIQ Neural v2.6</span>
+              <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">ContentIQ AI Engine</span>
             </div>
             <Bot className="w-4 h-4 text-brand-500" />
           </div>
           <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-tight">
-            Gemini 1.5 Pro + Factual Verification Dual-Engine active.
+            {aiModel ? `${aiModel} — grounded RAG active.` : 'Connecting...'}
           </p>
         </div>
       )}

@@ -64,7 +64,7 @@ export const HelpModal: React.FC<HelpModalProps> = ({ isOpen, onClose }) => {
                   Fact & Meaning Verification
                 </div>
                 <p className="text-[12px] text-slate-500 dark:text-slate-400 mt-1">
-                  Line-by-line semantic diffing comparing source statements with AI outputs to flag numerical errors or meaning shifts (96%+ Fidelity Score).
+                  Claim-by-claim grounding check comparing your generated outputs against the original source content, flagging numerical errors or meaning shifts with a fidelity score.
                 </p>
               </div>
 

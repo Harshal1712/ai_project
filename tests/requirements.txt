@@ -1,0 +1,4 @@
+pytest
+requests
+fpdf2
+python-docx

@@ -1,31 +1,28 @@
-import { Router } from 'express';
+import { Router, Request, Response } from 'express';
+import { Types } from 'mongoose';
+import { authenticateToken, AuthenticatedRequest } from '../middleware/auth.js';
+import { asyncHandler } from '../middleware/errorHandler.js';
+import { getGlobalTelemetry, getUserTelemetry } from '../services/analyticsService.js';
 
 export const analyticsRouter = Router();
 
-analyticsRouter.get('/telemetry', (req, res) => {
-  return res.json({
-    metrics: {
-      totalTransformations: 1428,
-      documentsProcessed: 892,
-      videosSummarized: 314,
-      aiOutputsGenerated: 5640,
-      avgLatencySeconds: 3.8,
-      contentFidelityScore: 96.8
-    },
-    topOutputTypes: [
-      { name: 'Summary', count: 420 },
-      { name: 'PPT Deck', count: 380 },
-      { name: 'FAQ / Q&A', count: 310 },
-      { name: 'MCQs', count: 260 },
-      { name: 'Social Post', count: 210 },
-      { name: 'Action Items', count: 190 }
-    ],
-    languageDistribution: [
-      { name: 'English', value: 65 },
-      { name: 'Hindi', value: 18 },
-      { name: 'Marathi', value: 8 },
-      { name: 'Tamil', value: 5 },
-      { name: 'Other', value: 4 }
-    ]
-  });
-});
+// GET /api/analytics/telemetry — global, aggregate-only platform metrics
+// (no per-user content exposed). Every number is computed live from the
+// database — replaces the old hardcoded constants entirely.
+analyticsRouter.get(
+  '/telemetry',
+  asyncHandler(async (_req: Request, res: Response) => {
+    const telemetry = await getGlobalTelemetry();
+    return res.json(telemetry);
+  })
+);
+
+// GET /api/analytics/summary — the authenticated user's own stats, for the AnalyticsPage dashboard.
+analyticsRouter.get(
+  '/summary',
+  authenticateToken,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const metrics = await getUserTelemetry(new Types.ObjectId(req.user!.userId));
+    return res.json({ metrics });
+  })
+);
