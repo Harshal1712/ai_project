@@ -62,6 +62,20 @@ async function withTimeout<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
+// Bounds a single await (used between streamed chunks, where the overall
+// request timeout doesn't apply because the stream may legitimately run long).
+export async function withIdleTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new TimeoutError(message)), ms);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    clearTimeout(timer!);
+  }
+}
+
 // Every structured/text call routes through this so 429s/timeouts back off
 // using the server's own suggested retry delay when it provides one,
 // instead of a blind exponential guess.

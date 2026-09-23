@@ -10,6 +10,13 @@ export interface ExtractedSegment {
   endTime?: number;
 }
 
+// Thrown for scanned/image-only PDFs so the ingestion pipeline can fall back to OCR.
+export class NoExtractableTextError extends Error {
+  constructor(public readonly pageCount: number) {
+    super('No extractable text found in this PDF. It may be a scanned/image-only document.');
+  }
+}
+
 export interface ExtractionResult {
   fullText: string;
   segments: ExtractedSegment[];
@@ -39,7 +46,7 @@ export async function extractPdf(buffer: Buffer): Promise<ExtractionResult> {
 
   const fullText = segments.map((s) => s.text).join('\n\n');
   if (fullText.length === 0) {
-    throw new Error('No extractable text found in this PDF. It may be a scanned/image-only document.');
+    throw new NoExtractableTextError(pageCount);
   }
 
   return { fullText, segments, pageCount };

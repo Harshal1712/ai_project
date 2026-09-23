@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Bot, Globe, Shield, Save, Check, Loader2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { ContentIQApiClient, ApiError } from '../services/api';
+import { ChangePasswordCard } from '../components/settings/ChangePasswordCard';
 
 export const SettingsPage: React.FC = () => {
   const { user } = useAuth();
@@ -12,9 +13,11 @@ export const SettingsPage: React.FC = () => {
   const [defaultAudience, setDefaultAudience] = useState('Executive');
   const [defaultTone, setDefaultTone] = useState('Professional');
   const [health, setHealth] = useState<{ aiModel: string; embeddingModel: string } | null>(null);
+  const [hasPassword, setHasPassword] = useState<boolean>(user?.hasPassword ?? true);
 
   useEffect(() => {
     ContentIQApiClient.getMe().then(({ user }) => {
+      if (user.hasPassword !== undefined) setHasPassword(user.hasPassword);
       if (user.preferences?.defaultAudience) setDefaultAudience(user.preferences.defaultAudience);
       if (user.preferences?.defaultTone) setDefaultTone(user.preferences.defaultTone);
     });
@@ -92,6 +95,8 @@ export const SettingsPage: React.FC = () => {
           </div>
         </div>
       </div>
+
+      <ChangePasswordCard hasPassword={hasPassword} />
 
       <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-3xl p-6 shadow-sm space-y-3">
         <h3 className="font-bold text-sm text-slate-900 dark:text-white flex items-center gap-2"><Shield className="w-4 h-4 text-emerald-500" />Security</h3>

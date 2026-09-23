@@ -10,6 +10,11 @@ import { authenticateToken, AuthenticatedRequest } from '../middleware/auth.js';
 import { asyncHandler, AppError } from '../middleware/errorHandler.js';
 import { aiRateLimiter } from '../middleware/rateLimiter.js';
 import { createProjectAndEnqueue } from '../services/projectCreationService.js';
+import { translateOutput, SUPPORTED_LANGUAGES } from '../services/generation/translationService.js';
+import { AuditLog } from '../models/AuditLog.js';
+import { ChatSession } from '../models/ChatSession.js';
+import { FlashcardDeck } from '../models/FlashcardDeck.js';
+import { QuizAttempt } from '../models/QuizAttempt.js';
 
 export const transformationsRouter = Router();
 
@@ -138,6 +143,9 @@ transformationsRouter.get(
       keyMetrics: source.keyMetrics || [],
       entities: source.entities || [],
       references: source.references || [],
+      visualElements: source.visualElements || [],
+      ocrUsed: !!source.ocrUsed,
+      pageCount: source.pageCount,
     } : undefined;
 
     const videoData = source && isVideo ? {
@@ -173,6 +181,8 @@ transformationsRouter.get(
           slides: o.slides,
           quiz: o.quiz,
           items: o.items,
+          language: o.language || project.config?.language,
+          translatedFromId: o.translatedFromId?.toString(),
         })),
         verification: verification
           ? {
@@ -213,9 +223,91 @@ transformationsRouter.delete(
       GeneratedOutput.deleteMany({ projectId: project._id }),
       VerificationReport.deleteMany({ projectId: project._id }),
       Conversation.deleteMany({ projectId: project._id }),
+      FlashcardDeck.deleteMany({ projectId: project._id }),
+      QuizAttempt.deleteMany({ projectId: project._id }),
+      ChatSession.updateMany({ userId: project.userId }, { $pull: { projectIds: project._id } }),
     ]);
     await project.deleteOne();
 
     return res.json({ success: true, message: 'Project deleted successfully' });
+  })
+);
+
+// GET /api/transformations/languages — languages offered for output translation and Q&A answers.
+transformationsRouter.get('/languages', (_req, res) => {
+  res.json({ languages: SUPPORTED_LANGUAGES });
+});
+
+// POST /api/transformations/outputs/:outputId/translate — translates an
+// existing output (text, slides, or quiz) and saves it as a new output on
+// the same project, so the original is never overwritten.
+transformationsRouter.post(
+  '/outputs/:outputId/translate',
+  authenticateToken,
+  aiRateLimiter,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const outputId = String(req.params.outputId);
+    const { language } = req.body;
+
+    if (!Types.ObjectId.isValid(outputId)) {
+      return res.status(404).json({ error: 'Output not found' });
+    }
+    if (!SUPPORTED_LANGUAGES.includes(language)) {
+      throw new AppError(400, `Unsupported language. Choose one of: ${SUPPORTED_LANGUAGES.join(', ')}`);
+    }
+
+    const output = await GeneratedOutput.findById(outputId);
+    if (!output) {
+      return res.status(404).json({ error: 'Output not found' });
+    }
+    if (output.userId.toString() !== req.user!.userId) {
+      return res.status(403).json({ error: 'Access forbidden: You do not have permission to translate this output' });
+    }
+
+    const originalId = output.translatedFromId ?? output._id;
+    const existing = await GeneratedOutput.findOne({ translatedFromId: originalId, language }).lean();
+    if (existing) {
+      throw new AppError(409, `This output has already been translated to ${language}.`);
+    }
+
+    const translated = await translateOutput(
+      { content: output.content, slides: output.slides, quiz: output.quiz },
+      language
+    );
+
+    const baseTitle = output.title.replace(/\s+\([^)]*\)$/, '');
+    const created = await GeneratedOutput.create({
+      projectId: output.projectId,
+      userId: output.userId,
+      type: output.type,
+      title: `${baseTitle} (${language})`,
+      content: translated.content,
+      slides: translated.slides,
+      quiz: translated.quiz,
+      items: output.items,
+      language,
+      translatedFromId: originalId,
+    });
+
+    await AuditLog.create({
+      userId: output.userId,
+      projectId: output.projectId,
+      action: 'OUTPUT_TRANSLATED',
+      detail: `Translated "${output.type}" to ${language}`,
+    });
+
+    return res.status(201).json({
+      output: {
+        id: created._id.toString(),
+        type: created.type,
+        title: created.title,
+        content: created.content,
+        slides: created.slides,
+        quiz: created.quiz,
+        items: created.items,
+        language: created.language,
+        translatedFromId: originalId.toString(),
+      },
+    });
   })
 );

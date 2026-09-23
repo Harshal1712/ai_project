@@ -26,6 +26,8 @@ export interface IGeneratedOutput extends Document {
   slides?: ISlide[];
   quiz?: IQuizQuestion[];
   items?: string[];
+  language?: string;
+  translatedFromId?: Types.ObjectId;
   createdAt: Date;
 }
 
@@ -55,6 +57,8 @@ const generatedOutputSchema = new Schema<IGeneratedOutput>(
       },
     ],
     items: { type: [String] },
+    language: { type: String },
+    translatedFromId: { type: Schema.Types.ObjectId, ref: 'GeneratedOutput' },
   },
   { timestamps: { createdAt: true, updatedAt: false } }
 );

@@ -3,6 +3,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import { Sparkles, Loader2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { ContentIQApiClient, ApiError } from '../services/api';
+import { GoogleSignInButton } from '../components/auth/GoogleSignInButton';
 
 export function Login() {
   const navigate = useNavigate();
@@ -60,7 +61,12 @@ export function Login() {
               />
             </div>
             <div>
-              <label className="text-xs font-medium text-slate-600 dark:text-slate-400 block mb-1">Password</label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-xs font-medium text-slate-600 dark:text-slate-400">Password</label>
+                <Link to="/forgot-password" className="text-[11px] text-brand-600 dark:text-brand-400 font-medium hover:underline">
+                  Forgot password?
+                </Link>
+              </div>
               <input
                 type="password"
                 required
@@ -79,6 +85,10 @@ export function Login() {
               Sign in
             </button>
           </form>
+
+          <div className="mt-4">
+            <GoogleSignInButton text="signin_with" onError={setError} />
+          </div>
 
           <p className="text-xs text-slate-500 text-center mt-5">
             Don't have an account?{' '}

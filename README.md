@@ -12,6 +12,12 @@ Built around problem statement **SIH26154**.
 - Generate summaries, key points, FAQs, MCQs, a slide deck, and more — all derived from the actual extracted content, not templated strings.
 - Run **AI output grounding/consistency verification**: claims are extracted from generated output and checked against the source's own retrieved chunks, flagging contradictions, softened numbers, or unsupported statements. This is a grounding check, not a guarantee of perfect factual correctness.
 - Everything is persisted per-user in MongoDB — projects, sources, chunks, outputs, verification reports, and Q&A conversation history all survive logout/login.
+- **Streaming answers** — Q&A answers stream token-by-token over Server-Sent Events, with numbered inline citations `[1]` that expand to the exact excerpt, page, or timestamp. Answers can be stopped mid-generation.
+- **Multi-document chat** — ask one question across up to 10 documents and videos at once; retrieval spans all of them and every citation names the document it came from.
+- **Charts, tables & figures in PDFs** — Gemini reads each PDF's visual elements; their descriptions are embedded alongside the text, so a question about a value that exists only inside a chart is answerable with a page citation. Scanned PDFs with no text layer fall back to AI OCR.
+- **Study mode** — AI-generated flashcards scheduled with Leitner spaced repetition (Again / Good / Easy), plus quiz score history across attempts.
+- **Multi-language** — ask in any language and get answers in that language (or a chosen one) from sources in another; translate any output (text, slides, or quiz) into 20 languages as a new output alongside the original.
+- **Account security** — forgot/reset password via single-use, hashed, expiring email links; change password; Google sign-in with server-side ID-token verification.
 
 ## Architecture
 
@@ -156,7 +162,20 @@ MongoDB stays Atlas-hosted (not containerized) — the compose file only runs `f
 | `UPLOAD_DIR` / `MAX_UPLOAD_MB` | File upload storage/limits |
 | `RATE_LIMIT_WINDOW_MS` / `RATE_LIMIT_MAX` | Rate limiting on AI-backed routes |
 
+| `PDF_VISUAL_ANALYSIS` | Describe charts/tables/figures in PDFs and OCR scanned PDFs (default `true`; one extra Gemini call per PDF) |
+| `GOOGLE_CLIENT_ID` | OAuth client ID for Google sign-in (optional — the button is hidden when unset) |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `MAIL_FROM` | Password reset email delivery (optional — without SMTP, reset links are printed to the server console) |
+| `PASSWORD_RESET_TTL_MINUTES` | Reset link lifetime (default `60`) |
+
 See `server/.env.example` for the full list with defaults.
+
+### Setting up Google sign-in (optional)
+
+1. In [Google Cloud Console → Credentials](https://console.cloud.google.com/apis/credentials), create an **OAuth client ID** of type **Web application**.
+2. Add your frontend origin (e.g. `http://localhost:3000`) under **Authorized JavaScript origins**.
+3. Put the client ID in both `server/.env` (`GOOGLE_CLIENT_ID`) and the root `.env` (`VITE_GOOGLE_CLIENT_ID`), then restart both.
+
+The browser gets a Google-signed ID token; the server verifies its signature and audience with `google-auth-library` before issuing its own JWT. A Google account whose verified email matches an existing user is linked to that account.
 
 ## Testing
 
@@ -173,9 +192,19 @@ pytest
 
 The suite exercises real content end-to-end: registration/login, cross-user authorization (403s), real PDF/DOCX/text ingestion via `rawText`, grounded RAG Q&A (including an out-of-scope refusal and an adversarial contradiction check), MCQ generation, verification, and the async job lifecycle. Assertions are structural (shape, ranges, presence) rather than pinned to exact wording, since a real LLM's phrasing varies run to run.
 
+## How the newer features work
+
+- **Streaming (`POST /api/qa/ask/stream`, `POST /api/chat/sessions/:id/ask/stream`)** — ownership and validation run *before* the stream opens, so auth errors are ordinary JSON. The stream then sends `sources` → `token`… → `done` (or `error`). The model is told to answer with a bare `NOT_AVAILABLE` marker when the excerpts don't cover the question; the first few characters are held back until that's ruled out, which yields a reliable `grounded` flag without a second LLM call. Client disconnects abort the Gemini request, and nothing is saved for an aborted answer.
+- **Multi-document retrieval** — the vector search filter becomes `projectId: { $in: [...] }`; every project is ownership-checked when the chat is created *and* again on each question. Conversation history is read from the database (never from the client) and short follow-ups are folded together with the previous question before embedding.
+- **Cross-language retrieval** — `gemini-embedding-001` is multilingual, but cross-language matches score lower; when a non-Latin-script question finds nothing above the threshold, it's retried once with an English translation.
+- **PDF visuals** — the PDF is sent to Gemini's document understanding, which returns structured `{ page, kind, title, description, keyData }` records. They're merged into the page-ordered segment list before chunking, so a chart chunks alongside the text of its own page.
+- **Spaced repetition** — cards move through Leitner boxes 1–5 (review intervals: now, 1, 3, 7, 16 days); "Again" sends a card back to box 1 and re-queues it in the current session. Additional generated cards skip prompts already in the deck.
+- **Password reset** — only the SHA-256 of the random reset token is stored; tokens are single-use and expire. The forgot-password response is identical whether or not the email exists, and credential endpoints have a stricter IP rate limit.
+
 ## Known limitations
 
-- **PDF/DOCX are text-only** — embedded images, charts, and diagrams are not multimodally analyzed.
+- **DOCX is text-only** — embedded images, charts, and diagrams in DOCX files are not analyzed (PDFs are, see above). PDF visual descriptions and scanned-PDF OCR are model readings of the page, so exact figures should be checked against the original.
+- **Changing a password doesn't revoke existing sessions** — issued JWTs stay valid until they expire (`JWT_EXPIRES_IN`).
 - **DOCX has no real page numbers** (DOCX doesn't store pagination) — its citations use section/heading references instead of page numbers.
 - **Uploaded video/audio timestamps** come from Gemini watching/listening to the file, not frame-accurate speech recognition — treat them as close estimates.
 - **YouTube transcript fetching** uses an unofficial, key-free scraper of YouTube's caption endpoints; it can break if YouTube changes its internals, and surfaces as a real error rather than a fabricated fallback.

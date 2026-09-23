@@ -120,3 +120,24 @@ def create_youtube_project(base_url):
         return project_res.json()["project"], job
 
     return _create
+
+
+def read_sse(response):
+    """Parses a Server-Sent Events response body into a list of (event, data) tuples."""
+    import json
+    events = []
+    event_name, data_lines = "message", []
+    for raw_line in response.iter_lines(decode_unicode=True):
+        line = raw_line or ""
+        if line == "":
+            if data_lines:
+                events.append((event_name, json.loads("\n".join(data_lines))))
+            event_name, data_lines = "message", []
+        elif line.startswith("event:"):
+            event_name = line[6:].strip()
+        elif line.startswith("data:"):
+            data_lines.append(line[5:].lstrip())
+        # lines starting with ":" are heartbeat comments
+    if data_lines:
+        events.append((event_name, json.loads("\n".join(data_lines))))
+    return events

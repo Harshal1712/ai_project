@@ -15,6 +15,8 @@ import { qaRouter } from './routes/qa.js';
 import { verificationRouter } from './routes/verification.js';
 import { analyticsRouter } from './routes/analytics.js';
 import { historyRouter } from './routes/history.js';
+import { chatRouter } from './routes/chat.js';
+import { studyRouter } from './routes/study.js';
 
 const app = express();
 
@@ -30,6 +32,11 @@ app.get('/api/health', (_req, res) => {
     problemStatement: 'SIH26154',
     aiModel: env.GEMINI_MODEL,
     embeddingModel: env.EMBEDDING_MODEL,
+    features: {
+      googleSignIn: !!env.GOOGLE_CLIENT_ID,
+      passwordResetEmail: !!env.SMTP_HOST,
+      pdfVisualAnalysis: env.PDF_VISUAL_ANALYSIS,
+    },
     timestamp: new Date().toISOString(),
   });
 });
@@ -43,6 +50,8 @@ app.use('/api/qa', qaRouter);
 app.use('/api/verification', verificationRouter);
 app.use('/api/analytics', analyticsRouter);
 app.use('/api/history', historyRouter);
+app.use('/api/chat', chatRouter);
+app.use('/api/study', studyRouter);
 
 app.use(notFoundHandler);
 app.use(errorHandler);

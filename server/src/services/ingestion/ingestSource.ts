@@ -4,7 +4,8 @@ import { ISource, Source } from '../../models/Source.js';
 import { ContentChunk } from '../../models/ContentChunk.js';
 import { chunkSegments, Segment } from '../chunking/chunker.js';
 import { EmbeddingService } from '../llm/EmbeddingService.js';
-import { extractPdf } from '../extraction/pdfExtractor.js';
+import { extractPdf, NoExtractableTextError } from '../extraction/pdfExtractor.js';
+import { analyzePdfVisuals, describeVisualElement, PdfVisionResult } from '../extraction/pdfVisionExtractor.js';
 import { extractDocx } from '../extraction/docxExtractor.js';
 import { extractTxt } from '../extraction/txtExtractor.js';
 import { extractYoutube } from '../extraction/youtubeExtractor.js';
@@ -54,6 +55,61 @@ async function embedAndStoreChunks(segments: Segment[], source: ISource): Promis
   }
 }
 
+// Text layer via pdfjs, plus Gemini's view of the charts/tables/figures that
+// pdfjs can't see. Visual descriptions are merged in page order so they
+// chunk alongside the text of the page they appear on. Scanned PDFs (no
+// text layer) fall back to Gemini OCR instead of failing outright.
+async function extractPdfWithVisuals(filePath: string, source: ISource): Promise<{ fullText: string; segments: Segment[] }> {
+  const buffer = await fs.readFile(filePath);
+
+  let textSegments: Segment[] = [];
+  let pageCount: number | undefined;
+  let isScanned = false;
+  try {
+    const result = await extractPdf(buffer);
+    textSegments = result.segments;
+    pageCount = result.pageCount;
+  } catch (err) {
+    if (!(err instanceof NoExtractableTextError) || !env.PDF_VISUAL_ANALYSIS) throw err;
+    isScanned = true;
+    pageCount = err.pageCount;
+  }
+
+  let vision: PdfVisionResult = { visualElements: [], ocrPages: [] };
+  if (env.PDF_VISUAL_ANALYSIS) {
+    try {
+      vision = await analyzePdfVisuals(filePath, { ocr: isScanned });
+    } catch (err) {
+      // Visual analysis is an enhancement for text PDFs — only fatal when it's our only source of text.
+      if (isScanned) throw err;
+      console.warn(`PDF visual analysis failed for "${source.originalName}", continuing with text only:`, err);
+    }
+  }
+
+  if (isScanned) {
+    if (vision.ocrPages.length === 0) {
+      throw new Error('No readable text could be found in this PDF, even with OCR.');
+    }
+    textSegments = vision.ocrPages.map((p) => ({ text: p.text, page: p.page }));
+  }
+
+  const visualSegments: Segment[] = vision.visualElements.map((v) => ({ text: describeVisualElement(v), page: v.page }));
+  // Array.prototype.sort is stable, so text keeps its order ahead of the figures on the same page.
+  const segments = [...textSegments, ...visualSegments].sort((a, b) => (a.page ?? 0) - (b.page ?? 0));
+
+  source.pageCount = pageCount;
+  source.visualElements = vision.visualElements;
+  source.ocrUsed = isScanned;
+
+  const visualBlock = visualSegments.map((s) => s.text).join('\n');
+  const fullText = [
+    textSegments.map((s) => s.text).join('\n\n'),
+    visualSegments.length > 0 ? `VISUAL ELEMENTS (charts, tables, figures):\n${visualBlock}` : '',
+  ].filter(Boolean).join('\n\n');
+
+  return { fullText, segments };
+}
+
 // The single pipeline every source type flows through: extract -> chunk ->
 // embed -> persist -> derive real document/video intelligence. Mirrors the
 // diagram in spec section 6, replacing every previously-fabricated step.
@@ -71,11 +127,9 @@ export async function ingestSource(sourceId: Types.ObjectId, options: IngestOpti
     switch (source.type) {
       case 'pdf': {
         if (!options.filePath) throw new Error('PDF source requires an uploaded file');
-        const buffer = await fs.readFile(options.filePath);
-        const result = await extractPdf(buffer);
+        const result = await extractPdfWithVisuals(options.filePath, source);
         fullText = result.fullText;
         segments = result.segments;
-        source.pageCount = result.pageCount;
         break;
       }
       case 'docx': {

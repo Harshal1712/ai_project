@@ -11,7 +11,9 @@ export type NavigationTab =
   | 'templates'
   | 'history'
   | 'analytics'
-  | 'settings';
+  | 'settings'
+  | 'chat'
+  | 'study';
 
 export type SourceType = 'pdf' | 'docx' | 'text' | 'image' | 'audio' | 'video' | 'youtube';
 
@@ -110,6 +112,8 @@ export interface GeneratedOutput {
   slides?: SlideData[];
   quiz?: QuizQuestion[];
   items?: string[];
+  language?: string;
+  translatedFromId?: string;
 }
 
 export interface VerificationCheck {
@@ -146,6 +150,17 @@ export interface DocumentIntelligenceData {
   keyMetrics: { label: string; value: string }[];
   entities: ExtractedEntity[];
   references: string[];
+  visualElements?: VisualElement[];
+  ocrUsed?: boolean;
+  pageCount?: number;
+}
+
+export interface VisualElement {
+  page: number;
+  kind: 'chart' | 'table' | 'diagram' | 'image' | 'infographic' | 'other';
+  title: string;
+  description: string;
+  keyData: string[];
 }
 
 export interface VideoChapter {

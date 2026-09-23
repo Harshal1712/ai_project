@@ -2,6 +2,7 @@ import { createUserContent, createPartFromUri } from '@google/genai';
 import { genai, callGenerateContent } from '../llm/genaiClient.js';
 import { env } from '../../config/env.js';
 import { transcriptSchema } from '../llm/schemas.js';
+import { uploadAndWaitForFile, deleteGeminiFile } from '../llm/geminiFiles.js';
 import { Segment } from '../chunking/chunker.js';
 
 export interface MediaExtractionResult {
@@ -27,30 +28,13 @@ Note: these are your best estimates from listening/watching, not frame-accurate 
 // timestamps, then delete the file immediately (Gemini auto-deletes after
 // 48h anyway, and this protects the 20GB/project quota during iteration).
 export async function extractMedia(filePath: string, mimeType: string): Promise<MediaExtractionResult> {
-  const uploaded = await genai.files.upload({ file: filePath, config: { mimeType } });
-  if (!uploaded.name) throw new Error('Gemini Files API upload did not return a file name');
+  const file = await uploadAndWaitForFile(filePath, mimeType, 'media file');
 
   try {
-    let fileState = uploaded;
-    for (let attempt = 0; attempt < 30 && fileState.state === 'PROCESSING'; attempt++) {
-      await new Promise((r) => setTimeout(r, 2000));
-      fileState = await genai.files.get({ name: uploaded.name! });
-    }
-
-    if (fileState.state === 'FAILED') {
-      throw new Error('Gemini failed to process the uploaded media file.');
-    }
-    if (fileState.state !== 'ACTIVE') {
-      throw new Error(`Uploaded media file did not become ready in time (state: ${fileState.state}).`);
-    }
-    if (!fileState.uri || !fileState.mimeType) {
-      throw new Error('Uploaded media file is missing its URI/MIME type after processing.');
-    }
-
     const response = await callGenerateContent(() =>
       genai.models.generateContent({
         model: env.GEMINI_MODEL,
-        contents: createUserContent([createPartFromUri(fileState.uri!, fileState.mimeType!), TRANSCRIPTION_PROMPT]),
+        contents: createUserContent([createPartFromUri(file.uri, file.mimeType), TRANSCRIPTION_PROMPT]),
         config: { responseMimeType: 'application/json', responseSchema: transcriptSchema as any },
       })
     );
@@ -76,8 +60,6 @@ export async function extractMedia(filePath: string, mimeType: string): Promise<
       segments,
     };
   } finally {
-    await genai.files.delete({ name: uploaded.name }).catch(() => {
-      // best-effort cleanup — the file auto-expires after 48h regardless
-    });
+    await deleteGeminiFile(file.name);
   }
 }

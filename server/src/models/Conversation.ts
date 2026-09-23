@@ -1,8 +1,11 @@
 import { Schema, model, Document, Types } from 'mongoose';
 
 export interface IChatCitation {
+  projectId?: string;
   sourceId: string;
+  sourceName?: string;
   page?: number;
+  section?: string;
   startTime?: number;
   endTime?: number;
   text: string;
@@ -25,6 +28,29 @@ export interface IConversation extends Document {
   updatedAt: Date;
 }
 
+// Shared with ChatSession so both chat types store messages identically.
+export const chatMessageSchema = new Schema(
+  {
+    role: { type: String, enum: ['user', 'assistant'], required: true },
+    content: { type: String, required: true },
+    citations: [
+      {
+        projectId: String,
+        sourceId: String,
+        sourceName: String,
+        page: Number,
+        section: String,
+        startTime: Number,
+        endTime: Number,
+        text: String,
+        score: Number,
+      },
+    ],
+    createdAt: { type: Date, default: Date.now },
+  },
+  { _id: false }
+);
+
 const conversationSchema = new Schema<IConversation>(
   {
     projectId: { type: Schema.Types.ObjectId, ref: 'Project', required: true, index: true },
@@ -35,8 +61,11 @@ const conversationSchema = new Schema<IConversation>(
         content: { type: String, required: true },
         citations: [
           {
+            projectId: String,
             sourceId: String,
+            sourceName: String,
             page: Number,
+            section: String,
             startTime: Number,
             endTime: Number,
             text: String,

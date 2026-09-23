@@ -3,6 +3,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import { Sparkles, Loader2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { ContentIQApiClient, ApiError } from '../services/api';
+import { GoogleSignInButton } from '../components/auth/GoogleSignInButton';
 
 export function Register() {
   const navigate = useNavigate();
@@ -95,6 +96,10 @@ export function Register() {
               Create account
             </button>
           </form>
+
+          <div className="mt-4">
+            <GoogleSignInButton text="signup_with" onError={setError} />
+          </div>
 
           <p className="text-xs text-slate-500 text-center mt-5">
             Already have an account?{' '}

@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Cpu, Search, Calendar, TrendingUp, BookOpen, Tag, ExternalLink, Loader2, FileText } from 'lucide-react';
 import { DocumentIntelligenceData, ProjectItem } from '../types';
 import { ContentIQApiClient, ApiError } from '../services/api';
+import { VisualElementsCard } from '../components/document/VisualElementsCard';
 
 const DOCUMENT_TYPES = ['pdf', 'docx', 'text'];
 
@@ -189,6 +190,10 @@ export const DocumentIntelligence: React.FC = () => {
               ))}
             </div>
           </div>
+
+          {docData.visualElements && (
+            <VisualElementsCard elements={docData.visualElements} ocrUsed={docData.ocrUsed} />
+          )}
         </div>
       </div>
     </div>
