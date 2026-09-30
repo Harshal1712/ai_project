@@ -24,7 +24,13 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     headers['Content-Type'] = 'application/json';
   }
 
-  const res = await fetch(`${API_BASE_URL}${path}`, { ...options, headers });
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE_URL}${path}`, { ...options, headers });
+  } catch {
+    // fetch only rejects on network/CORS failures, which otherwise surface as a vague generic error.
+    throw new ApiError(0, `Can't reach the server at ${API_BASE_URL}. Make sure the backend is running and you opened the app at the URL set as FRONTEND_URL in server/.env.`);
+  }
 
   if (res.status === 401) {
     window.dispatchEvent(new Event('contentiq:unauthorized'));
