@@ -1,4 +1,4 @@
-import { genai, callGenerateContent } from './genaiClient.js';
+import { genai, callGenerateContent, withIdleTimeout } from './genaiClient.js';
 import { env } from '../../config/env.js';
 
 export const GROUNDING_SYSTEM_INSTRUCTION = `You are ContentIQ AI's grounded content assistant.
@@ -8,6 +8,8 @@ Rules you must always follow:
 - If the answer is not contained in the provided context, clearly say the information is not available in the provided source.
 - Distinguish between what the source explicitly states and any interpretation you add — label interpretation as such.
 - If asked to confirm something that contradicts the source, correct it using the source's actual statement.`;
+
+const STREAM_IDLE_TIMEOUT_MS = 60_000;
 
 export class LLMService {
   public static async generateText(prompt: string, systemInstruction?: string): Promise<string> {
@@ -21,6 +23,40 @@ export class LLMService {
     const text = response.text;
     if (!text) throw new Error('Gemini returned an empty response');
     return text;
+  }
+
+  // Streams plain-text generation, invoking onChunk for each piece as Gemini
+  // produces it. Only opening the stream is retried — once tokens have been
+  // sent to the client, a retry would duplicate them. Each gap between
+  // chunks is bounded so a stalled stream can't hang the request forever.
+  public static async streamText(
+    prompt: string,
+    systemInstruction: string | undefined,
+    onChunk: (text: string) => void,
+    abortSignal?: AbortSignal
+  ): Promise<string> {
+    const stream = await callGenerateContent(() =>
+      genai.models.generateContentStream({
+        model: env.GEMINI_MODEL,
+        contents: prompt,
+        config: { systemInstruction, abortSignal },
+      })
+    );
+
+    const iterator = stream[Symbol.asyncIterator]();
+    let full = '';
+    for (;;) {
+      const { value, done } = await withIdleTimeout(iterator.next(), STREAM_IDLE_TIMEOUT_MS, 'Gemini stream stalled');
+      if (done) break;
+      const text = value?.text;
+      if (text) {
+        full += text;
+        onChunk(text);
+      }
+    }
+
+    if (!full.trim()) throw new Error('Gemini returned an empty response');
+    return full;
   }
 
   public static async generateStructured<T>(

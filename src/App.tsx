@@ -8,6 +8,8 @@ import { HelpModal } from './components/layout/HelpModal';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { Login } from './pages/Login';
 import { Register } from './pages/Register';
+import { ForgotPassword } from './pages/ForgotPassword';
+import { ResetPassword } from './pages/ResetPassword';
 
 // Pages
 import { Dashboard } from './pages/Dashboard';
@@ -23,6 +25,8 @@ import { TemplatesPage } from './pages/TemplatesPage';
 import { HistoryPage } from './pages/HistoryPage';
 import { AnalyticsPage } from './pages/AnalyticsPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { KnowledgeChat } from './pages/KnowledgeChat';
+import { StudyPage } from './pages/StudyPage';
 
 import { NavigationTab } from './types';
 
@@ -39,6 +43,8 @@ function pathToTab(pathname: string): NavigationTab {
   if (pathname.startsWith('/history')) return 'history';
   if (pathname.startsWith('/analytics')) return 'analytics';
   if (pathname.startsWith('/settings')) return 'settings';
+  if (pathname.startsWith('/chat')) return 'chat';
+  if (pathname.startsWith('/study')) return 'study';
   return 'dashboard';
 }
 
@@ -56,6 +62,8 @@ const TAB_TO_PATH: Record<NavigationTab, string> = {
   history: '/history',
   analytics: '/analytics',
   settings: '/settings',
+  chat: '/chat',
+  study: '/study',
 };
 
 function ProtectedRoute() {
@@ -121,6 +129,8 @@ export function App() {
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
+          <Route path="/forgot-password" element={<ForgotPassword />} />
+          <Route path="/reset-password" element={<ResetPassword />} />
 
           <Route element={<ProtectedRoute />}>
             <Route element={<AppShell />}>
@@ -137,6 +147,10 @@ export function App() {
               <Route path="/history" element={<HistoryPage />} />
               <Route path="/analytics" element={<AnalyticsPage />} />
               <Route path="/settings" element={<SettingsPage />} />
+              <Route path="/chat" element={<KnowledgeChat />} />
+              <Route path="/chat/:sessionId" element={<KnowledgeChat />} />
+              <Route path="/study" element={<StudyPage />} />
+              <Route path="/study/:projectId" element={<StudyPage />} />
               <Route path="*" element={<Navigate to="/dashboard" replace />} />
             </Route>
           </Route>

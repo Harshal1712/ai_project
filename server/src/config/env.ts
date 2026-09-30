@@ -33,6 +33,25 @@ const envSchema = z.object({
   RATE_LIMIT_MAX: z.coerce.number().default(20),
 
   VECTOR_INDEX_NAME: z.string().default('vector_index'),
+
+  // Sends each uploaded PDF to Gemini to describe its charts, tables, and
+  // figures (and to OCR scanned pages). Costs one extra generation call per PDF.
+  PDF_VISUAL_ANALYSIS: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((v) => v === 'true'),
+
+  // Google sign-in — leave unset to disable the "Continue with Google" flow.
+  GOOGLE_CLIENT_ID: z.string().optional(),
+
+  // Password reset emails. When SMTP_HOST is unset, reset links are printed to
+  // the server console instead (handy for local development).
+  SMTP_HOST: z.string().optional(),
+  SMTP_PORT: z.coerce.number().default(587),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASS: z.string().optional(),
+  MAIL_FROM: z.string().default('ContentIQ AI <no-reply@contentiq.local>'),
+  PASSWORD_RESET_TTL_MINUTES: z.coerce.number().default(60),
 });
 
 export type Env = z.infer<typeof envSchema>;

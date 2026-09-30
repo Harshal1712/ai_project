@@ -29,6 +29,10 @@ export interface ISource extends Document {
   entities?: { id: string; name: string; category: string; frequency: number; contextSnippet: string }[];
   references?: string[];
 
+  // PDF visual understanding (charts, tables, figures) and scanned-PDF OCR
+  visualElements?: { page: number; kind: string; title: string; description: string; keyData: string[] }[];
+  ocrUsed?: boolean;
+
   // Video/YouTube Intelligence
   videoTitle?: string;
   chapters?: { id: string; timestamp: string; seconds: number; title: string; summary: string }[];
@@ -76,6 +80,9 @@ const sourceSchema = new Schema<ISource>(
       },
     ],
     references: { type: [String] },
+
+    visualElements: [{ _id: false, page: Number, kind: String, title: String, description: String, keyData: [String] }],
+    ocrUsed: { type: Boolean },
 
     videoTitle: { type: String },
     chapters: [

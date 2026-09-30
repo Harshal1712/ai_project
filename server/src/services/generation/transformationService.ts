@@ -36,6 +36,7 @@ const GENERIC_TYPE_INSTRUCTIONS: Record<string, string> = {
 function buildGroundingHeader(sourceName: string, config: TransformationConfig): string {
   return `Source: "${sourceName}"
 Target audience: ${config.audience} | Output language: ${config.language} | Tone: ${config.tone} | Detail level: ${config.detailLevel} | Objective: ${config.objective}
+Write the entire output in ${config.language}, even if the source content is in a different language.
 Base your output strictly on the content provided below. Do not invent facts not present in it.`;
 }
 
@@ -62,8 +63,8 @@ ${context}
   };
 }
 
-async function generateQuiz(context: string, sourceName: string): Promise<GeneratedOutputDraft> {
-  const quiz = await generateMCQs(context, sourceName, 5);
+async function generateQuiz(context: string, sourceName: string, language: string): Promise<GeneratedOutputDraft> {
+  const quiz = await generateMCQs(context, sourceName, 5, language);
   return {
     type: 'MCQs / Quiz',
     title: `MCQs / Quiz — ${sourceName}`,
@@ -127,7 +128,7 @@ export async function generateTransformationOutputs(
 
   if (summaryTypes.length > 0) {
     tasks.push(
-      generateSummaries(context, sourceName, config.audience, config.tone).then((summary) => {
+      generateSummaries(context, sourceName, config.audience, config.tone, config.language).then((summary) => {
         outputs.push(...summaryOutputsFrom(summary, summaryTypes, sourceName));
       })
     );
@@ -137,7 +138,7 @@ export async function generateTransformationOutputs(
     if (type === 'Presentation / PPT') {
       tasks.push(generatePresentation(context, sourceName, config).then((o) => { outputs.push(o); }));
     } else if (type === 'MCQs / Quiz') {
-      tasks.push(generateQuiz(context, sourceName).then((o) => { outputs.push(o); }));
+      tasks.push(generateQuiz(context, sourceName, config.language).then((o) => { outputs.push(o); }));
     } else {
       tasks.push(generateGeneric(type, context, sourceName, config).then((o) => { outputs.push(o); }));
     }

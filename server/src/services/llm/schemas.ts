@@ -230,3 +230,52 @@ export const transcriptSchema = {
   },
   required: ['segments'],
 };
+
+export const pdfVisionSchema = {
+  type: Type.OBJECT,
+  properties: {
+    visualElements: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          page: { type: Type.INTEGER },
+          kind: { type: Type.STRING, enum: ['chart', 'table', 'diagram', 'image', 'infographic', 'other'] },
+          title: { type: Type.STRING },
+          description: { type: Type.STRING },
+          keyData: { type: Type.ARRAY, items: { type: Type.STRING } },
+        },
+        required: ['page', 'kind', 'title', 'description', 'keyData'],
+      },
+    },
+    // Only requested for scanned/image-only PDFs that have no text layer.
+    pages: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: { page: { type: Type.INTEGER }, text: { type: Type.STRING } },
+        required: ['page', 'text'],
+      },
+    },
+  },
+  required: ['visualElements'],
+};
+
+export const flashcardsSchema = {
+  type: Type.OBJECT,
+  properties: {
+    cards: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          front: { type: Type.STRING },
+          back: { type: Type.STRING },
+          citation: { type: Type.STRING },
+        },
+        required: ['front', 'back'],
+      },
+    },
+  },
+  required: ['cards'],
+};

@@ -17,11 +17,18 @@ import {
   Award,
   ExternalLink,
   Loader2,
-  AlertCircle
+  AlertCircle,
+  Square,
+  Trash2,
+  Languages,
+  GraduationCap
 } from 'lucide-react';
 import { ProjectItem, GeneratedOutput, QuizQuestion } from '../types';
 import confetti from 'canvas-confetti';
 import { ContentIQApiClient, ApiError } from '../services/api';
+import { useStreamingChat, fromStoredMessages } from '../hooks/useStreamingChat';
+import { ChatMessageBubble } from '../components/chat/ChatMessageBubble';
+import { LanguageSelect, useLanguages } from '../components/chat/LanguageSelect';
 
 export const ResultsPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -39,9 +46,18 @@ export const ResultsPage: React.FC = () => {
   const [quizAnswers, setQuizAnswers] = useState<{ [key: number]: number }>({});
   const [quizSubmitted, setQuizSubmitted] = useState(false);
 
-  const [chatMessages, setChatMessages] = useState<Array<{ sender: 'user' | 'ai'; text: string; citation?: string }>>([]);
   const [chatInput, setChatInput] = useState('');
-  const [chatLoading, setChatLoading] = useState(false);
+  const [answerLanguage, setAnswerLanguage] = useState('Auto');
+  const { messages: chatMessages, setMessages: setChatMessages, busy: chatLoading, send: sendChat, stop: stopChat } = useStreamingChat(
+    (query, handlers, signal) => ContentIQApiClient.askQuestionStream(query, id!, answerLanguage, handlers, signal)
+  );
+  const chatScrollRef = React.useRef<HTMLDivElement>(null);
+
+  const languages = useLanguages();
+  const [translateOpen, setTranslateOpen] = useState(false);
+  const [translating, setTranslating] = useState(false);
+  const [translateError, setTranslateError] = useState<string | null>(null);
+  const [quizSaved, setQuizSaved] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -55,17 +71,7 @@ export const ResultsPage: React.FC = () => {
         ]);
         setProject(proj);
         setActiveOutputTab(proj.outputs[0]?.id || '');
-        if (messages.length > 0) {
-          setChatMessages(
-            messages.map((m: any) => ({
-              sender: m.role === 'user' ? 'user' : 'ai',
-              text: m.content,
-              citation: m.citations?.[0] ? buildCitationText(m.citations[0]) : undefined,
-            }))
-          );
-        } else {
-          setChatMessages([{ sender: 'ai', text: 'Ask me anything about this source content — I will answer strictly from what was extracted, with citations.' }]);
-        }
+        setChatMessages(fromStoredMessages(messages));
       } catch (err) {
         setLoadError(err instanceof ApiError ? err.message : 'Failed to load this project.');
       } finally {
@@ -75,6 +81,47 @@ export const ResultsPage: React.FC = () => {
   }, [id]);
 
   const currentOutput = project?.outputs.find((o) => o.id === activeOutputTab) || project?.outputs[0];
+
+  useEffect(() => {
+    chatScrollRef.current?.scrollTo({ top: chatScrollRef.current.scrollHeight });
+  }, [chatMessages]);
+
+  // Reset per-output state when switching tabs so a quiz or slide position doesn't leak between outputs.
+  useEffect(() => {
+    setQuizAnswers({});
+    setQuizSubmitted(false);
+    setQuizSaved(false);
+    setCurrentSlideIndex(0);
+    setTranslateOpen(false);
+    setTranslateError(null);
+  }, [activeOutputTab]);
+
+  const originalIdOf = (output: GeneratedOutput) => output.translatedFromId || output.id;
+  const existingTranslations = new Set(
+    currentOutput && project ? project.outputs.filter((o) => originalIdOf(o) === originalIdOf(currentOutput)).map((o) => o.language) : []
+  );
+
+  const handleTranslate = async (language: string) => {
+    if (!currentOutput || !project) return;
+    setTranslateOpen(false);
+    setTranslateError(null);
+    setTranslating(true);
+    try {
+      const { output } = await ContentIQApiClient.translateOutput(currentOutput.id, language);
+      setProject({ ...project, outputs: [...project.outputs, output] });
+      setActiveOutputTab(output.id);
+    } catch (err) {
+      setTranslateError(err instanceof ApiError ? err.message : 'Translation failed.');
+    } finally {
+      setTranslating(false);
+    }
+  };
+
+  const handleClearChat = async () => {
+    if (!id || chatLoading) return;
+    await ContentIQApiClient.clearConversation(id).catch(() => {});
+    setChatMessages([]);
+  };
 
   const handleCopy = (text: string, outId: string) => {
     navigator.clipboard.writeText(text);
@@ -94,23 +141,12 @@ export const ResultsPage: React.FC = () => {
     URL.revokeObjectURL(url);
   };
 
-  const handleSendMessage = async (e: React.FormEvent) => {
+  const handleSendMessage = (e: React.FormEvent) => {
     e.preventDefault();
     if (!chatInput.trim() || !id || chatLoading) return;
-
     const userText = chatInput;
     setChatInput('');
-    setChatMessages((prev) => [...prev, { sender: 'user', text: userText }]);
-    setChatLoading(true);
-
-    try {
-      const { result } = await ContentIQApiClient.askQuestion(userText, id);
-      setChatMessages((prev) => [...prev, { sender: 'ai', text: result.answer, citation: result.sources[0] ? buildCitationText(result.sources[0]) : result.citation }]);
-    } catch (err) {
-      setChatMessages((prev) => [...prev, { sender: 'ai', text: err instanceof ApiError ? err.message : 'Something went wrong answering that question.' }]);
-    } finally {
-      setChatLoading(false);
-    }
+    sendChat(userText);
   };
 
   const handleSelectQuizOption = (questionId: number, optionIdx: number) => {
@@ -118,9 +154,22 @@ export const ResultsPage: React.FC = () => {
     setQuizAnswers((prev) => ({ ...prev, [questionId]: optionIdx }));
   };
 
+  const quizScore = currentOutput?.quiz ? currentOutput.quiz.filter((q) => quizAnswers[q.id] === q.correctAnswer).length : 0;
+
   const handleSubmitQuiz = () => {
     setQuizSubmitted(true);
     confetti({ particleCount: 80, spread: 60, origin: { y: 0.6 } });
+    if (id && currentOutput?.quiz) {
+      ContentIQApiClient.recordQuizAttempt(id, quizScore, currentOutput.quiz.length, currentOutput.id)
+        .then(() => setQuizSaved(true))
+        .catch(() => {});
+    }
+  };
+
+  const handleRetryQuiz = () => {
+    setQuizAnswers({});
+    setQuizSubmitted(false);
+    setQuizSaved(false);
   };
 
   if (loading) {
@@ -159,7 +208,14 @@ export const ResultsPage: React.FC = () => {
           <h1 className="text-xl sm:text-2xl font-extrabold text-slate-900 dark:text-white mt-1">{project.name}</h1>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            onClick={() => navigate(`/study/${id}`)}
+            className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white font-semibold text-xs rounded-xl transition-colors flex items-center gap-1.5"
+          >
+            <GraduationCap className="w-3.5 h-3.5" />
+            <span>Study Flashcards</span>
+          </button>
           <button
             onClick={() => navigate('/create', { state: { initialSourceType: project.source.type, initialConfig: project.config, initialOutputs: project.selectedOutputTypes } })}
             className="px-4 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-semibold text-xs rounded-xl transition-colors flex items-center gap-1.5"
@@ -229,6 +285,9 @@ export const ResultsPage: React.FC = () => {
                     {out.type === 'Presentation / PPT' && <Presentation className="w-3.5 h-3.5" />}
                     {out.type === 'MCQs / Quiz' && <Award className="w-3.5 h-3.5" />}
                     <span>{out.type}</span>
+                    {out.translatedFromId && out.language && (
+                      <span className={`text-[9px] px-1.5 py-0.5 rounded-md ${isActive ? 'bg-white/20' : 'bg-slate-200 dark:bg-slate-700'}`}>{out.language}</span>
+                    )}
                   </button>
                 );
               })}
@@ -241,6 +300,35 @@ export const ResultsPage: React.FC = () => {
                   <button onClick={() => handleCopy(currentOutput.content, currentOutput.id)} className="p-2 rounded-lg text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white hover:bg-white dark:hover:bg-slate-700 transition-colors" title="Copy Content">
                     {copiedId === currentOutput.id ? <Check className="w-4 h-4 text-emerald-500" /> : <Copy className="w-4 h-4" />}
                   </button>
+                  <div className="relative">
+                    <button
+                      onClick={() => setTranslateOpen((o) => !o)}
+                      disabled={translating}
+                      className="p-2 rounded-lg text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white hover:bg-white dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
+                      title="Translate to another language"
+                    >
+                      {translating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Languages className="w-4 h-4" />}
+                    </button>
+                    {translateOpen && (
+                      <div className="absolute right-0 top-10 z-20 w-44 max-h-64 overflow-y-auto rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg p-1">
+                        <p className="px-2 py-1 text-[10px] font-bold uppercase text-slate-400">Translate to</p>
+                        {languages.map((lang) => {
+                          const done = existingTranslations.has(lang) || (!currentOutput.translatedFromId && (currentOutput.language || project.config.language) === lang);
+                          return (
+                            <button
+                              key={lang}
+                              disabled={done}
+                              onClick={() => handleTranslate(lang)}
+                              className="w-full text-left px-2 py-1.5 rounded-lg text-xs text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40 disabled:hover:bg-transparent flex items-center justify-between"
+                            >
+                              {lang}
+                              {done && <Check className="w-3 h-3" />}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
                   <button onClick={() => handleDownload(currentOutput)} className="p-2 rounded-lg text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white hover:bg-white dark:hover:bg-slate-700 transition-colors" title="Download Text File">
                     <Download className="w-4 h-4" />
                   </button>
@@ -253,6 +341,13 @@ export const ResultsPage: React.FC = () => {
                   </button>
                 </div>
               </div>
+            )}
+
+            {(translating || translateError) && (
+              <p className={`text-xs ${translateError ? 'text-rose-500' : 'text-slate-500'} flex items-center gap-1.5`}>
+                {translating && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                {translateError || 'Translating this output — it will open in a new tab when ready...'}
+              </p>
             )}
 
             {currentOutput && (
@@ -330,10 +425,27 @@ export const ResultsPage: React.FC = () => {
                         );
                       })}
                     </div>
-                    {!quizSubmitted && (
+                    {!quizSubmitted ? (
                       <button onClick={handleSubmitQuiz} className="w-full py-3 bg-brand-600 text-white font-bold text-xs rounded-xl shadow-md hover:bg-brand-700 transition-colors">
                         Submit Answers & Check Score
                       </button>
+                    ) : (
+                      <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-850 border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-extrabold text-slate-900 dark:text-white">
+                            Score: {quizScore} / {currentOutput.quiz.length} ({Math.round((quizScore / currentOutput.quiz.length) * 100)}%)
+                          </p>
+                          <p className="text-[11px] text-slate-400">{quizSaved ? 'Saved to your study progress.' : 'Saving to your study progress...'}</p>
+                        </div>
+                        <div className="flex gap-2">
+                          <button onClick={handleRetryQuiz} className="px-3 py-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-semibold flex items-center gap-1">
+                            <RefreshCw className="w-3.5 h-3.5" /> Retry
+                          </button>
+                          <button onClick={() => navigate(`/study/${id}`)} className="px-3 py-2 rounded-xl bg-brand-600 text-white text-xs font-semibold flex items-center gap-1">
+                            <GraduationCap className="w-3.5 h-3.5" /> Study mode
+                          </button>
+                        </div>
+                      </div>
                     )}
                   </div>
                 ) : isEditing ? (
@@ -355,30 +467,31 @@ export const ResultsPage: React.FC = () => {
                 <div className="p-1.5 rounded-lg bg-brand-100 dark:bg-brand-950/80 text-brand-600 dark:text-brand-400"><Bot className="w-4 h-4" /></div>
                 <div>
                   <h3 className="font-bold text-xs text-slate-900 dark:text-white">Ask Content AI</h3>
-                  <p className="text-[10px] text-slate-400">Grounded Q&A with citations</p>
+                  <p className="text-[10px] text-slate-400">Streaming, grounded Q&A with citations</p>
                 </div>
               </div>
+              {chatMessages.length > 0 && (
+                <button onClick={handleClearChat} disabled={chatLoading} className="p-1.5 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40" title="Clear conversation">
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+            <div className="pt-2">
+              <LanguageSelect value={answerLanguage} onChange={setAnswerLanguage} />
             </div>
 
-            <div className="flex-1 overflow-y-auto py-3 space-y-3">
-              {chatMessages.map((msg, i) => (
-                <div key={i} className={`flex items-start gap-2 text-xs ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
-                  {msg.sender === 'ai' && <div className="w-6 h-6 rounded-lg bg-brand-600 text-white flex items-center justify-center shrink-0 mt-0.5"><Sparkles className="w-3 h-3" /></div>}
-                  <div className={`p-3 rounded-2xl max-w-[85%] space-y-1 ${msg.sender === 'user' ? 'bg-brand-600 text-white font-medium rounded-tr-none' : 'bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 rounded-tl-none border border-slate-200/60 dark:border-slate-700/60'}`}>
-                    <p className="whitespace-pre-wrap leading-relaxed text-[11px]">{msg.text}</p>
-                    {msg.citation && (
-                      <div className="text-[9px] font-semibold text-brand-600 dark:text-brand-300 pt-1 border-t border-slate-200/50 dark:border-slate-700/50 flex items-center gap-1">
-                        <ExternalLink className="w-2.5 h-2.5" /><span>{msg.citation}</span>
-                      </div>
-                    )}
+            <div ref={chatScrollRef} className="flex-1 overflow-y-auto py-3 space-y-3">
+              {chatMessages.length === 0 && (
+                <div className="flex items-start gap-2 text-xs">
+                  <div className="w-6 h-6 rounded-lg bg-brand-600 text-white flex items-center justify-center shrink-0 mt-0.5"><Sparkles className="w-3 h-3" /></div>
+                  <div className="p-3 rounded-2xl rounded-tl-none bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 border border-slate-200/60 dark:border-slate-700/60 text-[11px] leading-relaxed">
+                    Ask me anything about this source content — I answer strictly from what was extracted, with numbered citations. You can ask in any language.
                   </div>
                 </div>
-              ))}
-              {chatLoading && (
-                <div className="flex items-center gap-2 text-xs text-slate-400">
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" /> Retrieving grounded answer...
-                </div>
               )}
+              {chatMessages.map((msg) => (
+                <ChatMessageBubble key={msg.id} message={msg} />
+              ))}
             </div>
 
             <form onSubmit={handleSendMessage} className="pt-3 border-t border-slate-100 dark:border-slate-800 flex gap-2">
@@ -389,9 +502,15 @@ export const ResultsPage: React.FC = () => {
                 placeholder="Ask anything about this document..."
                 className="flex-1 px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-brand-500"
               />
-              <button type="submit" disabled={chatLoading} className="p-2 rounded-xl bg-brand-600 text-white hover:bg-brand-700 transition-colors shrink-0 disabled:opacity-50">
-                <Send className="w-4 h-4" />
-              </button>
+              {chatLoading ? (
+                <button type="button" onClick={stopChat} className="p-2 rounded-xl bg-slate-700 text-white hover:bg-slate-800 transition-colors shrink-0" title="Stop generating">
+                  <Square className="w-4 h-4" />
+                </button>
+              ) : (
+                <button type="submit" disabled={!chatInput.trim()} className="p-2 rounded-xl bg-brand-600 text-white hover:bg-brand-700 transition-colors shrink-0 disabled:opacity-50">
+                  <Send className="w-4 h-4" />
+                </button>
+              )}
             </form>
           </div>
         </div>
@@ -400,12 +519,3 @@ export const ResultsPage: React.FC = () => {
   );
 };
 
-function buildCitationText(source: { page?: number; section?: string; startTime?: number; endTime?: number }): string {
-  if (source.page != null) return `Page ${source.page}`;
-  if (source.section) return `Section: ${source.section}`;
-  if (source.startTime != null) {
-    const fmt = (s: number) => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
-    return `${fmt(source.startTime)} - ${fmt(source.endTime ?? source.startTime)}`;
-  }
-  return 'Source content';
-}

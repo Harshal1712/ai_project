@@ -14,7 +14,9 @@ import {
   ChevronLeft,
   ChevronRight,
   Cpu,
-  Bot
+  Bot,
+  Library,
+  GraduationCap
 } from 'lucide-react';
 import { NavigationTab } from '../../types';
 import { ContentIQApiClient } from '../../services/api';
@@ -46,6 +48,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'dashboard' as NavigationTab, label: 'Dashboard', icon: LayoutDashboard },
     { id: 'create' as NavigationTab, label: 'Create Transformation', icon: PlusCircle, badge: 'NEW', highlight: true },
     { id: 'projects' as NavigationTab, label: 'My Projects', icon: FolderKanban, count: completedTransformationsCount },
+    { id: 'chat' as NavigationTab, label: 'Multi-Doc Chat', icon: Library, badge: 'AI' },
+    { id: 'study' as NavigationTab, label: 'Study Mode', icon: GraduationCap },
     { id: 'documents' as NavigationTab, label: 'Documents', icon: FileText },
     { id: 'video-summarizer' as NavigationTab, label: 'Video Summaries', icon: Video },
     { id: 'document-intelligence' as NavigationTab, label: 'Doc Intelligence', icon: Cpu },

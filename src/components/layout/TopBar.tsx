@@ -26,6 +26,13 @@ const ACTION_TITLES: Record<string, string> = {
   PROJECT_DELETED: 'Project Deleted',
   USER_LOGIN: 'Logged In',
   USER_REGISTERED: 'Account Registered',
+  PASSWORD_CHANGED: 'Password Changed',
+  PASSWORD_RESET: 'Password Reset',
+  PASSWORD_RESET_REQUESTED: 'Password Reset Requested',
+  GOOGLE_LOGIN: 'Signed In with Google',
+  FLASHCARDS_GENERATED: 'Flashcards Generated',
+  QUIZ_ATTEMPTED: 'Quiz Completed',
+  OUTPUT_TRANSLATED: 'Output Translated',
 };
 
 interface TopBarProps {

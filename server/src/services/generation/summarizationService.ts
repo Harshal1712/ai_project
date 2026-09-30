@@ -35,10 +35,11 @@ async function buildGroundedContext(fullText: string): Promise<string> {
   return batchSummaries.map((s, i) => `[Section ${i + 1} summary]\n${s}`).join('\n\n');
 }
 
-export async function generateSummaries(fullText: string, sourceName: string, audience: string, tone: string): Promise<SummaryResult> {
+export async function generateSummaries(fullText: string, sourceName: string, audience: string, tone: string, language = 'English'): Promise<SummaryResult> {
   const context = await buildGroundedContext(fullText);
 
   const prompt = `Generate a summary package for the document "${sourceName}" for a ${audience} audience, in a ${tone} tone.
+Write every field in ${language}, even if the source is in a different language (keep names, numbers, and technical terms exact).
 ${PRESERVE_INSTRUCTION}
 Base everything strictly on the content below — do not add outside information.
 

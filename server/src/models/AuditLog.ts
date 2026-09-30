@@ -8,7 +8,14 @@ export type AuditAction =
   | 'SOURCE_PROCESSED'
   | 'OUTPUT_GENERATED'
   | 'VERIFICATION_RUN'
-  | 'QA_ASKED';
+  | 'QA_ASKED'
+  | 'PASSWORD_CHANGED'
+  | 'PASSWORD_RESET_REQUESTED'
+  | 'PASSWORD_RESET'
+  | 'GOOGLE_LOGIN'
+  | 'FLASHCARDS_GENERATED'
+  | 'QUIZ_ATTEMPTED'
+  | 'OUTPUT_TRANSLATED';
 
 export interface IAuditLog extends Document {
   _id: Types.ObjectId;

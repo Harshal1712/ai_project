@@ -5,6 +5,9 @@ export interface AuthUser {
   name: string;
   email: string;
   role: string;
+  avatarUrl?: string;
+  hasPassword?: boolean;
+  googleLinked?: boolean;
 }
 
 interface AuthContextValue {
@@ -13,6 +16,7 @@ interface AuthContextValue {
   isAuthenticated: boolean;
   login: (token: string, user: AuthUser) => void;
   logout: () => void;
+  updateUser: (patch: Partial<AuthUser>) => void;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -34,6 +38,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUser(newUser);
   }, []);
 
+  const updateUser = useCallback((patch: Partial<AuthUser>) => {
+    setUser((prev) => {
+      if (!prev) return prev;
+      const next = { ...prev, ...patch };
+      localStorage.setItem(USER_KEY, JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
   const logout = useCallback(() => {
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(USER_KEY);
@@ -48,7 +61,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => window.removeEventListener('contentiq:unauthorized', handler);
   }, [logout]);
 
-  const value = useMemo(() => ({ user, token, isAuthenticated: !!token, login, logout }), [user, token, login, logout]);
+  const value = useMemo(
+    () => ({ user, token, isAuthenticated: !!token, login, logout, updateUser }),
+    [user, token, login, logout, updateUser]
+  );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };
